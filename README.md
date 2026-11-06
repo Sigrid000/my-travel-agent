@@ -1,6 +1,6 @@
 # my-travel-agent
 
-**休闲旅行规划 Agent**（Python）：自然语言 → LLM 抽槽约束 → 只读工具（地理/POI/路线/天气/预算）→ 可解释行程；付款/凭据 **HITL 拦截**；JSONL trace + 20+ eval。
+**休闲旅行规划 Agent**（Python）：自然语言 → LLM 抽槽约束 → 只读工具（地理/POI/路线/天气/预算）→ 可解释行程；付款/凭据 **HITL 拦截**；JSONL trace + 精简 eval（约 10 条核心 case）。
 
 ## 功能
 
@@ -68,8 +68,10 @@ User -> FastAPI / CLI
 ## 文档
 
 - [docs/spec.md](docs/spec.md)
+- [docs/trace.md](docs/trace.md)（JSONL 事件约定；FINAL 全文见 `traces/*.final.md`）
 - [docs/prompt_plan.md](docs/prompt_plan.md)
 - [docs/eval_plan.md](docs/eval_plan.md)
 - [docs/retro.md](docs/retro.md)
 - [AGENTS.md](AGENTS.md)
+- [app/observability/trace-schema.json](app/observability/trace-schema.json)
 

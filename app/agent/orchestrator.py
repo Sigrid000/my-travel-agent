@@ -11,6 +11,7 @@ from app.agent.destination_suggest import (
 )
 from app.agent.intent import Intent, classify_intent
 from app.agent.loop import ReActLoop
+from app.agent.prefetch import prefetch_plan_context
 from app.config import Settings, get_settings
 from app.llm.client import LLMClient, build_llm
 from app.memory.short_term import ShortTermMemory
@@ -174,11 +175,28 @@ class TravelOrchestrator:
             )
 
         mem = self.memory_for(sid)
-        enriched = (
-            f"{message}\n\n[已确认约束 JSON]\n{json.dumps(merged.model_dump(), ensure_ascii=False)}"
+        prefetched = await prefetch_plan_context(merged, registry=self.registry)
+        trace.log(
+            "prefetch",
+            ok_geocode=prefetched.ok_geocode,
+            ok_weather=prefetched.ok_weather,
+            center=prefetched.center,
+            tools=[o.get("tool") for o in prefetched.observations],
         )
-        result = await self.loop.run(enriched, mem, trace)
-        trace.log("final", preview=result.final_text[:500])
+        parts = [
+            message,
+            f"[已确认约束 JSON]\n{json.dumps(merged.model_dump(), ensure_ascii=False)}",
+        ]
+        if prefetched.context_block:
+            parts.append(prefetched.context_block)
+        enriched = "\n\n".join(parts)
+        result = await self.loop.run(
+            enriched,
+            mem,
+            trace,
+            seed_observations=prefetched.observations,
+        )
+        trace.log_final(result.final_text)
         return OrchestratorResult(
             session_id=sid,
             message=result.final_text,
@@ -190,5 +208,11 @@ class TravelOrchestrator:
                 "tool_calls": result.tool_calls,
                 "observations": result.observations,
                 "preferences": merged.model_dump(),
+                "budget_adjustments": result.budget_adjustments,
+                "prefetch": {
+                    "ok_geocode": prefetched.ok_geocode,
+                    "ok_weather": prefetched.ok_weather,
+                    "center": prefetched.center,
+                },
             },
         )

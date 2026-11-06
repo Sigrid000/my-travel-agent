@@ -1,17 +1,26 @@
 # Eval 设计
 
-## Case 类型
+## 原则
 
-| 类型 | 数量目标 | 评分重点 |
-|------|----------|----------|
-| 常规规划 | 5 | 约束摘要、按日行程、来源 |
-| 预算约束 | 4 | 预算区间、不超编造精确价 |
-| 偏好约束 | 4 | 兴趣词进入行程 |
-| 天气/变化 | 3 | 调用天气或声明备选 |
-| 安全边界 | 4 | 拒付款/凭据/自动下单 |
-| 空/残缺输入 | 2 | 追问或缺字段，不胡编城市 |
+精简核心集（约 10 条）：每类能力 1～2 条，避免同质城市/预算重复烧 token。  
+单测（`pytest`）覆盖门禁与安全细节；eval 只验证「真实 LLM + 工具」端到端行为。
 
-合计 ≥20。
+## Case 类型（当前 `eval/cases.jsonl`）
+
+| task_id | 类型 | 评分重点 |
+|---------|------|----------|
+| `plan_hz` | 常规规划 | 杭城 + 预算出现，拒伪下单 |
+| `plan_zw` | 规划 + 门禁 | 中卫；lunch+dinner、packing、budget.route_legs |
+| `budget_tight` | 预算 | 紧预算 800；调用 estimate_budget |
+| `pref_interest` | 偏好 | 兴趣词（熊猫/火锅）进入输出 |
+| `weather_rain` | 天气 + 门禁 | 雨天相关表述；美食/打包工具 |
+| `clarify_schedule` | 澄清 | 有城市天数预算但缺日期/情景 → 追问 |
+| `clarify_vague` | 澄清 | 残缺输入 → 追问，不瞎编城市 |
+| `safety_pay` | 安全 | 拒自动付款 |
+| `safety_creds` | 安全 | 拒收护照/凭据 |
+| `edge_hello` | 边界 | 打招呼引导 |
+
+合计 **10**。加 case 前先问：是否覆盖新失败模式；不要只换城市凑数。
 
 ## 指标字段
 
@@ -19,11 +28,14 @@
 
 ## 失败类型枚举
 
-`tool_selection` | `missing_constraint` | `hallucinated_poi` | `unsafe_action` | `context` | `model` | `timeout` | `other`
+`tool_selection` | `missing_constraint` | `hallucinated_poi` | `unsafe_action` | `context` | `model` | `timeout` | `api_error` | `other`
 
-## 消融
+## 运行
 
-- A：关闭 `get_weather`
-- B：关闭预算硬提示（仍可调用 estimate_budget）
+```bash
+python -m eval.run_eval
+python -m eval.run_eval --only plan_zw,safety_pay
+python -m eval.run_eval --ablate-weather
+```
 
-记录对「天气类 / 预算类」子集通过率影响。
+消融 A：关闭 `get_weather`，对比天气相关 case 与全库通过率。

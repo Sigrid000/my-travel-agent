@@ -27,7 +27,7 @@
 | **行（城际）** | 无 | 不查机票/高铁真实班次与票价（后续有正规 API 再接） |
 | **食** | 有 | 午餐贴景点 + 晚饭全市参考；人均来自高德（有则写）；不代订 |
 | **住** | 有 | `search_hotels` 周边候选 + 价位参考；HITL，不代订 |
-| **衣** | 有 | `suggest_packing` 规则清单（天气/兴趣）；非购物推荐 |
+| **衣** | 有 | `suggest_packing` 规则清单：衣物/生活用品/天气活动/场景提示（含高海拔氧气袋·红景天等参考）；非购物、非医疗建议 |
 | **游（景点）** | 有 | `search_places`（点位/电话/开放时间）；门票→OTA 深链 + 经验区间 |
 
 后续增量见下方「备注」。
@@ -43,14 +43,18 @@
 | `search_hotels` | low | **完整行程必调**；候选列表，不代订 |
 | `geocode_location` | low | 有 Key 时优先高德，否则 Open-Meteo → Photon → Nominatim |
 | `estimate_route` | low | **完整行程必调**；高德优先，驾车附打车区间 |
-| `get_weather` | low | **完整行程必调**；Open-Meteo 或用户天气情景 |
-| `estimate_budget` | low | **完整行程必调**；有路线/人均时须带 route_legs / food_cost_hints（代码校验） |
-| `suggest_packing` | low | **完整行程必调**；建议携带规则清单 |
+| `get_weather` | low | **完整行程必调**（编排层常预取，计入 Observation）；Open-Meteo 或用户天气情景 |
+| `estimate_budget` | low | **完整行程必调**；有路线/人均时须带 route_legs / food_cost_hints；`style` 可由预算/天数自动推断；`transport_mode=taxi\|public\|mixed` |
+| 预算反馈（编排） | — | FINAL 前若明显超/过宽预算：最多 1 轮，要求重搜住吃 + 公交降级/舒适升级后再估 |
+| `search_food_nearby` / `search_hotels` | low | 传入 `budget_style` 或 `budget_cny`+`days` 时按人均档位排序，`budget_fit` 标记是否落入档位 |
+| `suggest_packing` | low | **完整行程必调**；衣物+生活用品+场景提示；可选 `altitude_m`；高原关键词触发氧气/红景天等参考提示 |
 | `request_confirmation` | high | 不执行副作用；只返回待确认选项 |
 | `collect_preferences` | low | 弱辅助说明；完整解析在编排层 LLM |
 | `echo` | low | 开发/评测用 |
 
-完整行程 FINAL 前，代码要求：已调用 `search_places`、`search_food_nearby`（至少 lunch+dinner）、`search_hotels`、`get_weather`、`estimate_route`、`estimate_budget`、`suggest_packing`；预算参数与工具结果对齐；FINAL 含门票核验/住宿/美食参考/预算/建议携带/数据来源等章节。
+完整行程 FINAL 前，代码要求：已调用 `search_places`、`search_food_nearby`（至少 lunch+dinner）、`search_hotels`、`get_weather`（含编排预取）、`estimate_route`、`estimate_budget`、`suggest_packing`；预算参数与工具结果对齐；FINAL 含门票核验/住宿/美食参考/预算/建议携带/数据来源等章节。
+
+编排预取：约束齐全后、进 ReAct 前，对城市做 `geocode_location` + `get_weather`（不占 LLM step）；不预取 lunch/hotels（须等 `search_places` 坐标）。工具仍串行，一次一个 Action。
 
 ## Human-in-the-loop
 
@@ -63,8 +67,8 @@
 ## 成功标准
 
 - clone 后按 README 能启动 API 并完成一次规划对话
-- 有 JSONL trace（tool / latency / token）
-- ≥20 eval case；报告通过率与失败类型
+- 有 JSONL trace（tool / latency / token）；FINAL 全文写入 `traces/*.final.md`（见 [trace.md](trace.md)）
+- 精简 eval（约 10 条核心 case，见 [eval_plan.md](eval_plan.md)）；报告通过率与失败类型
 - 安全用例：要求自动付款时不得「已下单」
 
 ## 成本约束
@@ -80,7 +84,7 @@
 
 - **食**：`search_food_nearby`（lunch 贴景点 / dinner 全市）+ 人均字段（高德有则返回）+ FINAL「美食参考」；不代订。
 - **住**：`search_hotels` 候选 + 距离/评分；价位多为参考档，预订 HITL。
-- **衣**：`suggest_packing` 规则清单，FINAL「建议携带」必含。
+- **衣**：`suggest_packing` 分节清单（衣物/生活用品/场景），FINAL「建议携带」必含；仍不做全域城市 tips 库。
 - **游/票**：景点工具 + `ticket_verify`（携程/美团搜索深链）；不编造精确票价。
 
 **仍属后续（非本 MVP）**：

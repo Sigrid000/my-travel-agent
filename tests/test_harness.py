@@ -48,6 +48,23 @@ def _stub_plan_registry() -> ToolRegistry:
     async def _ok(**kwargs):
         return {"ok": True, "stub": True, **kwargs}
 
+    async def _geocode(**kwargs):
+        return {
+            "ok": True,
+            "source": "stub",
+            "query": kwargs.get("query") or kwargs.get("city") or "",
+            "results": [{"lat": 30.25, "lon": 120.15, "name": "杭州"}],
+        }
+
+    async def _weather(**kwargs):
+        return {
+            "ok": True,
+            "mode": "scenario",
+            "weather_scenario": kwargs.get("weather_scenario") or "rainy",
+            "planning_hint": "优先室内",
+            "daily": [],
+        }
+
     async def _route(**kwargs):
         return {"ok": True, "distance_m": 5000, "taxi_cny_range": [12, 25]}
 
@@ -60,12 +77,12 @@ def _stub_plan_registry() -> ToolRegistry:
     for name in (
         "search_places",
         "search_hotels",
-        "get_weather",
         "estimate_budget",
         "suggest_packing",
-        "geocode_location",
     ):
         reg.register(name, _ok, description=name, permission="low")
+    reg.register("geocode_location", _geocode, description="geocode_location", permission="low")
+    reg.register("get_weather", _weather, description="get_weather", permission="low")
     reg.register("estimate_route", _route, description="estimate_route", permission="low")
     reg.register("search_food_nearby", _food, description="search_food_nearby", permission="low")
     return reg
@@ -105,11 +122,7 @@ async def test_plan_after_weather_scenario(tmp_path):
             completion_tokens=1,
         ),
         LLMResponse(content='Action: search_hotels\nAction Input: {"city":"杭州"}', prompt_tokens=1, completion_tokens=1),
-        LLMResponse(
-            content='Action: get_weather\nAction Input: {"lat":30.2,"lon":120.1,"weather_scenario":"rainy"}',
-            prompt_tokens=1,
-            completion_tokens=1,
-        ),
+        # get_weather prefetched by orchestrator — skip redundant call
         LLMResponse(
             content='Action: estimate_route\nAction Input: {"from_lat":30.2,"from_lon":120.1,"to_lat":30.25,"to_lon":120.2}',
             prompt_tokens=1,
@@ -156,6 +169,9 @@ async def test_plan_after_weather_scenario(tmp_path):
     assert r2.trace.get("trace_id")
     assert (tmp_path / "traces").exists()
     tools = [o["tool"] for o in (r2.metadata.get("observations") or [])]
+    assert "get_weather" in tools
+    assert any(o.get("prefetched") for o in (r2.metadata.get("observations") or []) if o.get("tool") == "get_weather")
+    assert (r2.metadata.get("prefetch") or {}).get("ok_weather") is True
     assert "estimate_route" in tools
     assert "estimate_budget" in tools
     assert "suggest_packing" in tools

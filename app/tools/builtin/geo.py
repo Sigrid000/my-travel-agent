@@ -7,6 +7,13 @@ from urllib.parse import quote
 import httpx
 
 from app.config import get_settings
+from app.tools.builtin.budget_style import (
+    hotel_max_cny,
+    infer_budget_style,
+    meal_max_cny,
+    rank_places_for_budget,
+    style_label_zh,
+)
 from app.tools.http_retry import once_with_retry
 from app.tools.registry import ToolRegistry
 
@@ -858,6 +865,11 @@ async def search_food_nearby(
     hotel_lat: float = 0.0,
     hotel_lon: float = 0.0,
     hotel_name: str = "",
+    budget_style: str = "",
+    budget_cny: int | float | None = None,
+    days: int = 0,
+    party_size: int = 1,
+    max_avg_cost: float = 0,
     **_: Any,
 ) -> dict[str, Any]:
     """Food near a POI: lunch=close convenience; dinner=wider + rating-aware reference list."""
@@ -873,6 +885,13 @@ async def search_food_nearby(
         meal_key = "lunch"
     city = (city or "").strip()
     limit = max(1, min(int(limit or 5), 10))
+    tier = infer_budget_style(
+        budget_cny=budget_cny,
+        days=days or None,
+        party_size=party_size,
+        style=budget_style,
+    )
+    cost_cap = float(max_avg_cost) if max_avg_cost and float(max_avg_cost) > 0 else meal_max_cny(tier)
     # lunch: tight around POI; dinner: city-wide (text in city) or wide radius fallback
     if not radius_m:
         radius_m = 25000 if meal_key == "dinner" else 1500
@@ -928,28 +947,18 @@ async def search_food_nearby(
                 timeout_sec=settings.tool_timeout_sec,
                 max_detail=max(limit, 8),
             )
-            if meal_key == "dinner":
-                # Prefer rated + has 人均, then nearer to anchor
-                places = sorted(
-                    places,
-                    key=lambda p: (
-                        0 if p.get("avg_cost_per_person_cny") is not None else 1,
-                        -float(p.get("rating") or 0),
-                        int(p.get("distance_m_from_center") or 10**9),
-                    ),
-                )
-            else:
-                places = sorted(
-                    places,
-                    key=lambda p: (
-                        int(p.get("distance_m_from_center") or 10**9),
-                        0 if p.get("avg_cost_per_person_cny") is not None else 1,
-                    ),
-                )
+            places = rank_places_for_budget(
+                places,
+                style=tier,
+                max_avg_cost=cost_cap,
+                prefer_low_cost=(tier == "budget" or meal_key == "lunch"),
+            )
             if places:
+                sliced = places[:limit]
                 with_cost = sum(
-                    1 for p in places[:limit] if p.get("avg_cost_per_person_cny") is not None
+                    1 for p in sliced if p.get("avg_cost_per_person_cny") is not None
                 )
+                in_band = sum(1 for p in sliced if p.get("budget_fit") is True)
                 return {
                     "ok": True,
                     "meal": meal_key,
@@ -959,7 +968,11 @@ async def search_food_nearby(
                     "hotel_name": hotel_name or "",
                     "center": {"lat": lat, "lon": lon},
                     "radius_m": radius_m,
-                    "places": places[:limit],
+                    "places": sliced,
+                    "budget_style": tier,
+                    "budget_style_label": style_label_zh(tier),
+                    "max_avg_cost_cny": cost_cap,
+                    "budget_fit_count": f"{in_band}/{len(sliced)}",
                     "avg_cost_coverage": f"{with_cost}/{min(limit, len(places))}",
                     "source": "amap",
                     "note": (
@@ -968,7 +981,8 @@ async def search_food_nearby(
                         if meal_key == "dinner"
                         else "午餐候选：贴近景点；avg_cost_per_person_cny=高德人均（若有）。"
                     )
-                    + " 人均为参考非菜单实价；缺人均时已尝试详情补全；不代订。",
+                    + f" 已按「{style_label_zh(tier)}」档排序（人均上限约 {int(cost_cap)} 元）；"
+                    "budget_fit=true 表示落入档位。人均为参考非菜单实价；不代订。",
                 }
             errors["amap"] = "empty_result"
         except Exception as e:
@@ -1033,6 +1047,11 @@ async def search_hotels(
     radius_m: int = 8000,
     limit: int = 5,
     keywords: str = "酒店",
+    budget_style: str = "",
+    budget_cny: int | float | None = None,
+    days: int = 0,
+    party_size: int = 1,
+    max_avg_cost: float = 0,
     **_: Any,
 ) -> dict[str, Any]:
     """Hotel/homestay candidates near coords (preferred) or city — list only, never book."""
@@ -1042,6 +1061,13 @@ async def search_hotels(
     lon = _coord(lon)
     limit = max(1, min(int(limit or 5), 10))
     radius_m = max(1000, min(int(radius_m or 8000), 30000))
+    tier = infer_budget_style(
+        budget_cny=budget_cny,
+        days=days or None,
+        party_size=party_size,
+        style=budget_style,
+    )
+    cost_cap = float(max_avg_cost) if max_avg_cost and float(max_avg_cost) > 0 else hotel_max_cny(tier)
     if not city and not (lat and lon):
         return {"ok": False, "error": "city_or_coords_required"}
 
@@ -1068,22 +1094,37 @@ async def search_hotels(
                 radius_m=radius_m,
                 extensions="all",
             )
+            places = rank_places_for_budget(
+                places,
+                style=tier,
+                max_avg_cost=cost_cap,
+                prefer_low_cost=(tier == "budget"),
+            )
+            # Secondary key: distance for ties / unknown cost
             places = sorted(
                 places,
-                key=lambda p: int(p.get("distance_m_from_center") or 10**9),
+                key=lambda p: (
+                    0 if p.get("budget_fit") is True else (1 if p.get("budget_fit") is None else 2),
+                    int(p.get("distance_m_from_center") or 10**9),
+                ),
             )
             if places:
+                sliced = places[:limit]
                 return {
                     "ok": True,
                     "city": city,
                     "near_name": near_name or "",
                     "center": {"lat": lat, "lon": lon},
                     "radius_m": radius_m,
-                    "places": places[:limit],
+                    "places": sliced,
+                    "budget_style": tier,
+                    "budget_style_label": style_label_zh(tier),
+                    "max_avg_cost_cny": cost_cap,
                     "source": "amap",
                     "note": (
-                        "住宿候选（周边搜索，已按距离排序）；amap_avg_cost 若有仅为参考，"
-                        "非实时房价。预订须用户自行在官方平台完成（HITL）"
+                        f"住宿候选（周边）；已按「{style_label_zh(tier)}」档偏好排序"
+                        f"（参考人均/消费上限约 {int(cost_cap)} 元）。"
+                        "amap_avg_cost 若有仅为参考，非实时房价。预订须用户自行完成（HITL）"
                     ),
                 }
             errors["amap"] = "empty_result"
@@ -1107,15 +1148,25 @@ async def search_hotels(
                 extensions="all",
             )
             if places:
+                places = rank_places_for_budget(
+                    places,
+                    style=tier,
+                    max_avg_cost=cost_cap,
+                    prefer_low_cost=(tier == "budget"),
+                )
                 return {
                     "ok": True,
                     "city": city,
                     "near_name": near_name or "",
                     "center": {"lat": lat, "lon": lon} if lat and lon else None,
-                    "places": places,
+                    "places": places[:limit],
+                    "budget_style": tier,
+                    "budget_style_label": style_label_zh(tier),
+                    "max_avg_cost_cny": cost_cap,
                     "source": "amap",
                     "note": (
-                        "住宿候选（城市关键字，周边不足时回退）；非实时房价；不代订"
+                        f"住宿候选（城市关键字回退）；「{style_label_zh(tier)}」档排序；"
+                        "非实时房价；不代订"
                     ),
                 }
             errors["amap_text"] = "empty_result"
@@ -1301,11 +1352,12 @@ def register_tools(registry: ToolRegistry) -> None:
         "search_food_nearby",
         search_food_nearby,
         description=(
-            "Food search. meal=lunch: near POI (~1.5km). meal=dinner: city-wide (pass city=), "
-            "rating-first reference with distances to POI/hotel. "
-            'Action Input: {"lat":37.53,"lon":104.99,"near_name":"沙坡头","meal":"lunch","limit":5} '
-            'or {"city":"中卫","lat":37.53,"lon":104.99,"near_name":"沙坡头","meal":"dinner",'
-            '"hotel_lat":37.52,"hotel_lon":105.19,"hotel_name":"某酒店","limit":8}'
+            "Food search. meal=lunch: near POI (~1.5km). meal=dinner: city-wide (pass city=). "
+            "Pass budget_style=budget|mid|comfort or budget_cny+days to rank by 人均档位. "
+            'Action Input: {"lat":37.53,"lon":104.99,"near_name":"沙坡头","meal":"lunch",'
+            '"budget_style":"budget","limit":5} '
+            'or {"city":"中卫","lat":37.53,"lon":104.99,"meal":"dinner","budget_cny":1500,"days":2,'
+            '"hotel_lat":37.52,"hotel_lon":105.19,"limit":8}'
         ),
         permission="low",
     )
@@ -1314,8 +1366,9 @@ def register_tools(registry: ToolRegistry) -> None:
         search_hotels,
         description=(
             "Hotels near lat/lon (preferred) or city; no booking. "
-            'Action Input: {"lat":37.53,"lon":104.99,"near_name":"沙坡头","radius_m":8000,"limit":5}'
-            ' or {"city":"中卫","limit":5}'
+            "Pass budget_style or budget_cny+days to prefer in-band 人均. "
+            'Action Input: {"lat":37.53,"lon":104.99,"near_name":"沙坡头","budget_style":"budget","limit":5}'
+            ' or {"city":"中卫","budget_cny":15000,"days":2,"limit":5}'
         ),
         permission="low",
     )

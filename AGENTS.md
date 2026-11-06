@@ -30,3 +30,4 @@ python -m eval.run_eval
 - 改工具：补单测 + 相关 eval case
 - 改 SafetyGuard：安全类 eval 必须仍通过
 - 外部 API：单测 mock httpx；集成可选 `RUN_LIVE_TOOLS=1`
+- Trace：见 `docs/trace.md`；改 `kind`/FINAL 落盘时更新 `app/observability/trace-schema.json`

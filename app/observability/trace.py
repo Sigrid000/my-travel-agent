@@ -38,6 +38,14 @@ class TraceRecorder:
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
+    def log_final(self, content: str) -> Path:
+        """Persist full FINAL text (JSONL + sidecar .final.md for human review)."""
+        text = content or ""
+        self.log("final", content=text, content_chars=len(text))
+        side = self.path.with_name(f"{self.trace_id}.final.md")
+        side.write_text(text, encoding="utf-8")
+        return side
+
     def add_tokens(self, prompt: int = 0, completion: int = 0) -> None:
         self.prompt_tokens += int(prompt or 0)
         self.completion_tokens += int(completion or 0)
@@ -47,6 +55,7 @@ class TraceRecorder:
             "trace_id": self.trace_id,
             "session_id": self.session_id,
             "path": str(self.path),
+            "final_path": str(self.path.with_name(f"{self.trace_id}.final.md")),
             "steps": sum(1 for e in self.events if e.get("kind") == "agent_step"),
             "tool_calls": self.tool_calls,
             "prompt_tokens": self.prompt_tokens,

@@ -7,9 +7,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.tools.builtin.budget_style import infer_budget_style, style_label_zh
 from app.tools.registry import ToolRegistry
 
 WeatherScenario = Literal["sunny", "cloudy", "rainy"]
+BudgetStyle = Literal["budget", "mid", "comfort"]
 
 _JSON_BLOCK = re.compile(r"\{[\s\S]*\}")
 
@@ -25,6 +27,7 @@ class TravelPreferences(BaseModel):
     start_date: str | None = None  # YYYY-MM-DD
     end_date: str | None = None
     weather_scenario: WeatherScenario | None = None
+    budget_style: BudgetStyle | None = None
     notes: str = ""
     missing_fields: list[str] = Field(default_factory=list)
     summary: str = ""
@@ -77,6 +80,14 @@ def recompute_missing_and_summary(pref: TravelPreferences) -> TravelPreferences:
         missing.append("schedule_basis")
     pref.missing_fields = missing
 
+    # Always derive from budget/days/party (not sticky prior style)
+    pref.budget_style = infer_budget_style(
+        budget_cny=pref.budget_cny,
+        days=pref.days,
+        party_size=pref.party_size,
+        style=None,
+    )
+
     bits: list[str] = []
     if pref.origin_city:
         bits.append(f"出发 {pref.origin_city}")
@@ -91,6 +102,8 @@ def recompute_missing_and_summary(pref: TravelPreferences) -> TravelPreferences:
         bits.append(f"天气情景：{label}")
     if pref.budget_cny is not None:
         bits.append(f"预算约 {pref.budget_cny} 元")
+    if pref.budget_style:
+        bits.append(f"消费档位：{style_label_zh(pref.budget_style)}")
     if pref.party_size:
         bits.append(f"{pref.party_size} 人")
     if pref.interests:

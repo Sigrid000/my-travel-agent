@@ -9,5 +9,5 @@
 7. **必调校验**：完整 FINAL 前代码检查 `search_places` / `search_food_nearby` / `search_hotels` / `get_weather` / `estimate_route` / `estimate_budget`。
 8. **HITL**：SafetyGuard 拦截高风险意图；`request_confirmation`。
 9. **快慢意图**：规则快车道（安全拒答 / 简单问候）+ 慢车道走 ReAct。
-10. **Eval**：`eval/cases.jsonl` ≥20 + `run_eval.py` 报告（含天气消融）。
+10. **Eval**：`eval/cases.jsonl` 精简核心集 + `run_eval.py` 报告（含天气消融）；见 [eval_plan.md](eval_plan.md)。
 11. **复盘**：`docs/retro.md` + README 简历表述。
